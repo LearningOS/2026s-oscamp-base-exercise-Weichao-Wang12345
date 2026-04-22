@@ -32,8 +32,8 @@
 #![cfg_attr(not(test), no_std)]
 
 use core::alloc::{GlobalAlloc, Layout};
-use core::ptr::null_mut;
 use core::sync::atomic::{AtomicUsize, Ordering};
+
 
 pub struct BumpAllocator {
     heap_start: usize,
@@ -74,7 +74,24 @@ unsafe impl GlobalAlloc for BumpAllocator {
         // 5. Atomically update next to end using compare_exchange
         //    (if CAS fails, another thread raced — retry in a loop)
         // 6. Return the aligned address as a pointer
-        todo!()
+        #[inline]
+        fn  align_up(addr:usize,align:usize) ->usize{
+            (addr + align - 1) & !(align - 1)
+        }
+        loop{
+        let current_next=self.next.load(Ordering::SeqCst);
+        let aligned=align_up(current_next, layout.align());
+        let new_next= aligned + layout.size();
+        if new_next>self.heap_end{
+            return core::ptr::null_mut();
+        }
+        match self.next.compare_exchange(
+            current_next,new_next,Ordering::SeqCst,Ordering::SeqCst){
+                 Ok(_) => return aligned as *mut u8,
+                Err(_) => continue,
+        }
+    }
+
     }
 
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
