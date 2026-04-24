@@ -59,7 +59,7 @@ pub fn x86_64_abi() -> SyscallABI {
          instruction: ("syscall"), 
          id_reg: ("rax"), 
          ret_reg: ("rax"),
-         arg_regs: &["rdi","rsi","rdx","r10","r9","r8"], 
+         arg_regs: &["rdi","rsi","rdx","r10","r8","r9"], 
           clobbered: &["rcx","r11"], 
           sys_write: 1, 
           sys_read: 0,
@@ -79,7 +79,7 @@ pub fn aarch64_abi() -> SyscallABI {
          id_reg: ("x8"), 
          ret_reg: ("x0"),
          arg_regs: &["x0","x1","x2","x3","x4","x5"], 
-          clobbered: &["x16","x17"], 
+          clobbered: &[], 
           sys_write: 64, 
           sys_read: 63,
            sys_close: 57, 
@@ -98,7 +98,7 @@ pub fn riscv64_abi() -> SyscallABI {
          id_reg: ("a7"), 
          ret_reg: ("a0"),
          arg_regs: &["a0","a1","a2","a3","a4","a5"], 
-          clobbered: &["a0","a1","a2","a3","a4","a5","a6","a7"], 
+          clobbered: &[], 
           sys_write: 64, 
           sys_read: 63,
            sys_close: 57, 
@@ -192,25 +192,50 @@ const NATIVE_SYS_EXIT: usize = 0;
 /// Write data from `buf` to file descriptor `fd`.
 pub fn sys_write(fd: usize, buf: &[u8]) -> isize {
     // TODO: Call syscall3 to implement write
-    todo!()
+    unsafe {
+        syscall3(
+            NATIVE_SYS_WRITE,
+             fd,
+             buf.as_ptr() as usize ,
+              buf.len())   
+    }
 }
 
 /// Read data from file descriptor `fd` into `buf`.
 pub fn sys_read(fd: usize, buf: &mut [u8]) -> isize {
     // TODO: Call syscall3 to implement read
-    todo!()
+      unsafe {
+        syscall3(
+            NATIVE_SYS_READ,
+             fd,
+             buf.as_ptr() as usize ,
+              buf.len())   
+    }
 }
 
 /// Close file descriptor `fd`.
 pub fn sys_close(fd: usize) -> isize {
     // TODO: Call syscall3 to implement close
-    todo!()
+      unsafe {
+        syscall3(
+            NATIVE_SYS_CLOSE,
+             fd,
+             0 ,
+              0)   
+    }
 }
 
 /// Terminate the current process.
 pub fn sys_exit(code: i32) -> ! {
     // TODO: Call syscall3 to implement exit
-    todo!()
+      unsafe {
+        syscall3(
+            NATIVE_SYS_EXIT,
+             code as usize,
+             0 ,
+              0)   
+    };
+    loop{}
 }
 
 // ============================================================
