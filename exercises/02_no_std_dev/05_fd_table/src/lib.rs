@@ -38,9 +38,9 @@
 //! - fd number reuse strategy (find smallest free slot)
 //! - `Arc` reference counting and resource release
 
-use std::sync::Arc;
-
 /// File abstraction trait — all "files" in the kernel (regular files, pipes, sockets) implement this
+ use std::sync::Arc;
+
 pub trait File: Send + Sync {
     fn read(&self, buf: &mut [u8]) -> isize;
     fn write(&self, buf: &[u8]) -> isize;
@@ -51,13 +51,16 @@ pub struct FdTable {
     // TODO: Design the internal structure
     // Hint: use Vec<Option<Arc<dyn File>>>
     //       the index is the fd number, None means the fd is closed or unallocated
+    table: Vec<Option<Arc<dyn File>>>,
 }
 
 impl FdTable {
     /// Create an empty fd table
     pub fn new() -> Self {
         // TODO
-        todo!()
+        Self{
+            table:Vec::new()
+        }
     }
 
     /// Allocate a new fd, return the fd number.
@@ -65,25 +68,47 @@ impl FdTable {
     /// Prefers reusing the smallest closed fd number; if no free slot, appends to the end.
     pub fn alloc(&mut self, file: Arc<dyn File>) -> usize {
         // TODO
-        todo!()
+        for (fd ,slot) in self.table.iter_mut().enumerate(){
+            if (*slot).is_none(){
+                *slot=Some(file);
+                return fd;
+            }
+        }
+        let fd=self.table.len();
+        self.table.push(Some(file));
+        fd
     }
 
     /// Get the file object for an fd. Returns None if the fd doesn't exist or is closed.
     pub fn get(&self, fd: usize) -> Option<Arc<dyn File>> {
         // TODO
-        todo!()
+       self.table.get(fd)?.clone()
     }
 
     /// Close an fd. Returns true on success, false if the fd doesn't exist or is already closed.
     pub fn close(&mut self, fd: usize) -> bool {
         // TODO
-        todo!()
+       match  self.table.get_mut(fd) {
+           Some(a)=> {
+            *a=None;
+            return true;
+           }
+           None=>{
+            return false;
+           }
+       }
     }
 
     /// Return the number of currently allocated fds (excluding closed ones)
     pub fn count(&self) -> usize {
         // TODO
-        todo!()
+        let mut cnt=0;
+         for slot in self.table.iter(){
+            if  (*slot).is_some(){
+                cnt+=1;
+            }
+        }
+        cnt
     }
 }
 
@@ -100,7 +125,7 @@ impl Default for FdTable {
 mod tests {
     use super::*;
     use std::sync::Mutex;
-
+    use std::sync::Arc;
     struct MockFile {
         id: usize,
         write_log: Mutex<Vec<Vec<u8>>>,
