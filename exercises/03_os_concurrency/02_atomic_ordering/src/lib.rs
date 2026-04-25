@@ -13,7 +13,7 @@
 //! When thread A writes with Release, and thread B reads the same location with Acquire,
 //! thread B will see all writes that thread A performed before the Release.
 
-use std::{ sync::atomic::{AtomicBool, AtomicU32, Ordering}};
+use std::{ f128::consts::E, sync::atomic::{AtomicBool, AtomicU32, Ordering}};
 
 /// Use Release-Acquire semantics to safely pass data between two threads.
 ///
@@ -85,15 +85,23 @@ impl OnceCell {
     pub fn init(&self, val: u32) -> bool {
         // TODO: Use compare_exchange to ensure initialization only once
         // Store value on success
-       if self.initialized.load(Ordering::SeqCst)
-       {
-             false
-       }
-       else{
-            self.initialized.store(true, Ordering::SeqCst);
-            self.value.compare_exchange(0, val, Ordering::SeqCst, Ordering::SeqCst);
-            true
-       }
+       
+           
+          match  self.initialized.compare_exchange(
+            false,
+             true,
+              Ordering::SeqCst,
+               Ordering::SeqCst) {
+            Ok(_)=>{
+                self.value.store(val,Ordering::Release);
+                true
+            }
+            Err(_)=>
+            {
+                false
+            }  
+          } 
+        
         
     }
 
