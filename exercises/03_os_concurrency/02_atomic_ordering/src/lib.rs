@@ -13,7 +13,7 @@
 //! When thread A writes with Release, and thread B reads the same location with Acquire,
 //! thread B will see all writes that thread A performed before the Release.
 
-use std::{ f128::consts::E, sync::atomic::{AtomicBool, AtomicU32, Ordering}};
+use std::{sync::atomic::{AtomicBool, AtomicU32, Ordering}};
 
 /// Use Release-Acquire semantics to safely pass data between two threads.
 ///
