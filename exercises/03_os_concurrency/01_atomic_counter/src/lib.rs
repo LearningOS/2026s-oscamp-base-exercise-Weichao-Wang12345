@@ -60,14 +60,14 @@ impl AtomicCounter {
     pub fn fetch_multiply(&self, multiplier: u64) -> u64 {
         // TODO: CAS loop
          loop {
-             let current = self.value.load(Ordering::Relaxed);
+             let current = self.value.load(Ordering::Acquire);
             let new = current * multiplier;
            match self.compare_and_swap(current, new) { 
-            Ok(current)=>{
-                return current;
+            Ok(old)=>{
+                return old;
             }
             Err(_)=>{
-
+                continue;
             }
             }
          }
