@@ -14,10 +14,9 @@
 //! - First and second arguments: `a0` (old context), `a1` (new context).
 
 #![cfg(target_arch = "riscv64")]
-
 use std::arch::naked_asm;
 
-/// Saved register state for one task (riscv64). Layout must match the offsets used in the asm below: for one task (riscv64). Layout must match the offsets used in the asm below:
+/// Saved register state for one task (riscv64). Layout must match the offsets used in the asm below:
 /// `sp` at 0, `ra` at 8, then `s0`–`s11` at 16, 24, … 104.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
@@ -64,8 +63,9 @@ impl TaskContext {
     /// - Set `sp = stack_top` with 16-byte alignment (RISC-V ABI requires 16-byte aligned stack at function entry).
     /// - Leave `s0`–`s11` zero; they will be loaded on switch.
     pub fn init(&mut self, stack_top: usize, entry: usize) {
-        self.ra=entry;
-        self.sp=stack_top &!0xF;
+        self.ra = entry as u64;
+        // Ensure sp is 16-byte aligned (RISC-V ABI requirement)
+        self.sp = (stack_top & !0xF) as u64;
     }
 }
 
@@ -75,7 +75,7 @@ impl TaskContext {
 ///
 /// Must be `#[unsafe(naked)]` to prevent the compiler from generating a prologue/epilogue.
 #[unsafe(naked)]
-pub unsafe fn switch_context(old: &mut TaskContext, new: &TaskContext) {
+pub unsafe extern "C" fn switch_context(old: &mut TaskContext, new: &TaskContext) {
     naked_asm!(
         "sd   sp,  0*8(a0)",
         "sd   ra,  1*8(a0)",
@@ -92,7 +92,7 @@ pub unsafe fn switch_context(old: &mut TaskContext, new: &TaskContext) {
         "sd   s10,12*8(a0)",
         "sd   s11,13*8(a0)",
 
-        "ld   sp,  0*8(a0)",
+        "ld   sp,  0*8(a1)",
         "ld   ra,  1*8(a1)",
         "ld   s0,  2*8(a1)",
         "ld   s1,  3*8(a1)",
@@ -111,7 +111,6 @@ pub unsafe fn switch_context(old: &mut TaskContext, new: &TaskContext) {
         "li   a1,         0",
         "ret",
     )
-
 }
 
 const STACK_SIZE: usize = 1024 * 64;
@@ -119,15 +118,16 @@ const STACK_SIZE: usize = 1024 * 64;
 /// Allocate a stack for a coroutine. Returns `(buffer, stack_top)` where `stack_top` is the high address
 /// (stack grows down). The buffer must be kept alive for the lifetime of the context using this stack.
 pub fn alloc_stack() -> (Vec<u8>, usize) {
-    let mut buffer=vec![0u8;4096];
-    let stack_top=buffer.as_ptr() as usize+buffer.len();
-    let stack_top_aligned=stack_top & !0xF;
-    (buffer,stack_top_aligned)
+    let buffer = vec![0u8; STACK_SIZE];
+    let stack_top = buffer.as_ptr() as usize + STACK_SIZE;
+    let stack_top_aligned = stack_top & !0xF;
+    (buffer, stack_top_aligned)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::sync::atomic::{AtomicU32, Ordering};
 
     static COUNTER: AtomicU32 = AtomicU32::new(0);
