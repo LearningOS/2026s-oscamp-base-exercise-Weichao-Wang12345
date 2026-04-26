@@ -14,6 +14,7 @@
 //! - First and second arguments: `a0` (old context), `a1` (new context).
 
 #![cfg(target_arch = "riscv64")]
+#![feature(naked_functions)]
 use std::arch::naked_asm;
 
 /// Saved register state for one task (riscv64). Layout must match the offsets used in the asm below:
