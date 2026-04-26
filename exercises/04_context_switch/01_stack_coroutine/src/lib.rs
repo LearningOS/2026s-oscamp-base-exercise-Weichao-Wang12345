@@ -12,8 +12,6 @@
 //! ## riscv64 ABI (for this exercise)
 //! - Callee-saved: `sp`, `ra`, `s0`–`s11`. The `ret` instruction is `jalr zero, 0(ra)`.
 //! - First and second arguments: `a0` (old context), `a1` (new context).
-
-#![cfg(target_arch = "riscv64")]
 #![feature(naked_functions)]
 #![no_std]          // ✅ 关键：禁用 std
 extern crate alloc;  // ✅ 关键：启用 alloc
