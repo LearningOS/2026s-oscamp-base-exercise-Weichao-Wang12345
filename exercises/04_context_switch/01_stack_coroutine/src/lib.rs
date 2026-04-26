@@ -15,7 +15,11 @@
 
 #![cfg(target_arch = "riscv64")]
 #![feature(naked_functions)]
-use std::arch::naked_asm;
+#![no_std]          // ✅ 关键：禁用 std
+extern crate alloc;  // ✅ 关键：启用 alloc
+
+use core::arch::naked_asm;       // ✅ 改用 core
+use alloc::vec::Vec;             // ✅ 改用 alloc
 
 /// Saved register state for one task (riscv64). Layout must match the offsets used in the asm below:
 /// `sp` at 0, `ra` at 8, then `s0`–`s11` at 16, 24, … 104.
@@ -38,7 +42,6 @@ pub struct TaskContext {
     pub s11: u64,
 }
 
-
 impl TaskContext {
     pub const fn empty() -> Self {
         Self {
@@ -59,23 +62,12 @@ impl TaskContext {
         }
     }
 
-    /// Initialize this context so that when we switch to it, execution starts at `entry`.
-    ///
-    /// - Set `ra = entry` so that the first `ret` in the new context jumps to `entry`.
-    /// - Set `sp = stack_top` with 16-byte alignment (RISC-V ABI requires 16-byte aligned stack at function entry).
-    /// - Leave `s0`–`s11` zero; they will be loaded on switch.
     pub fn init(&mut self, stack_top: usize, entry: usize) {
         self.ra = entry as u64;
-        // Ensure sp is 16-byte aligned (RISC-V ABI requirement)
         self.sp = (stack_top & !0xF) as u64;
     }
 }
 
-/// Switch from `old` to `new` context: save current callee-saved regs into `old`, load from `new`, then `ret` (jumps to `new.ra`).
-///
-/// In asm: store `sp`, `ra`, `s0`–`s11` to `[a0]` (old), load from `[a1]` (new), zero `a0`/`a1` so we do not leak pointers into the new context, then `ret`.
-///
-/// Must be `#[unsafe(naked)]` to prevent the compiler from generating a prologue/epilogue.
 #[unsafe(naked)]
 pub unsafe extern "C" fn switch_context(old: &mut TaskContext, new: &TaskContext) {
     naked_asm!(
@@ -109,35 +101,34 @@ pub unsafe extern "C" fn switch_context(old: &mut TaskContext, new: &TaskContext
         "ld   s10,12*8(a1)",
         "ld   s11,13*8(a1)",
 
-        "li   a0,         0",
-        "li   a1,         0",
+        "li   a0, 0",
+        "li   a1, 0",
         "ret",
     )
 }
 
 const STACK_SIZE: usize = 1024 * 64;
 
-/// Allocate a stack for a coroutine. Returns `(buffer, stack_top)` where `stack_top` is the high address
-/// (stack grows down). The buffer must be kept alive for the lifetime of the context using this stack.
 pub fn alloc_stack() -> (Vec<u8>, usize) {
-    let buffer = vec![0u8; STACK_SIZE];
+    let buffer = alloc::vec![0u8; STACK_SIZE];
     let stack_top = buffer.as_ptr() as usize + STACK_SIZE;
     let stack_top_aligned = stack_top & !0xF;
     (buffer, stack_top_aligned)
 }
 
+// 测试部分保持不变
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicU32, Ordering};
 
     static COUNTER: AtomicU32 = AtomicU32::new(0);
 
     extern "C" fn task_entry() {
         COUNTER.store(42, Ordering::SeqCst);
         loop {
-            std::hint::spin_loop();
+            core::hint::spin_loop();
         }
     }
 
@@ -163,8 +154,8 @@ mod tests {
     fn test_switch_to_task() {
         COUNTER.store(0, Ordering::SeqCst);
 
-        static mut MAIN_CTX_PTR: *mut TaskContext = std::ptr::null_mut();
-        static mut TASK_CTX_PTR: *mut TaskContext = std::ptr::null_mut();
+        static mut MAIN_CTX_PTR: *mut TaskContext = core::ptr::null_mut();
+        static mut TASK_CTX_PTR: *mut TaskContext = core::ptr::null_mut();
 
         extern "C" fn cooperative_task() {
             COUNTER.store(99, Ordering::SeqCst);
