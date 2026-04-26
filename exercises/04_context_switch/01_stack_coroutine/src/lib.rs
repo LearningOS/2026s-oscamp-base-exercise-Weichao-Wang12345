@@ -6,21 +6,19 @@
 //!
 //! ## Key Concepts
 //! - **Callee-saved registers**: Save and restore them on switch so the switched-away task can resume correctly later.
-//! - **Stack pointer `sp`** and **return address `ra`**: Restore them in the new context; the first time we switch to a task, `ret` jumps to `ra` (the entry point).
+//! - **Stack pointer `sp`** and **return address `ra`**: Restore them in the new context; the first time we switch to a task, `ret` jumps to `entry`.
 //! - Inline assembly: `core::arch::asm!`
 //!
 //! ## riscv64 ABI (for this exercise)
 //! - Callee-saved: `sp`, `ra`, `s0`–`s11`. The `ret` instruction is `jalr zero, 0(ra)`.
 //! - First and second arguments: `a0` (old context), `a1` (new context).
+
+#![cfg(target_arch = "riscv64")]
 #![feature(naked_functions)]
-#![no_std]          // ✅ 关键：禁用 std
-extern crate alloc;  // ✅ 关键：启用 alloc
 
-use core::arch::naked_asm;       // ✅ 改用 core
-use alloc::vec::Vec;             // ✅ 改用 alloc
+use std::arch::naked_asm;
 
-/// Saved register state for one task (riscv64). Layout must match the offsets used in the asm below:
-/// `sp` at 0, `ra` at 8, then `s0`–`s11` at 16, 24, … 104.
+/// Saved register state for a task.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TaskContext {
@@ -43,20 +41,9 @@ pub struct TaskContext {
 impl TaskContext {
     pub const fn empty() -> Self {
         Self {
-            sp: 0,
-            ra: 0,
-            s0: 0,
-            s1: 0,
-            s2: 0,
-            s3: 0,
-            s4: 0,
-            s5: 0,
-            s6: 0,
-            s7: 0,
-            s8: 0,
-            s9: 0,
-            s10: 0,
-            s11: 0,
+            sp: 0, ra: 0,
+            s0: 0, s1: 0, s2: 0, s3: 0, s4: 0, s5: 0,
+            s6: 0, s7: 0, s8: 0, s9: 0, s10: 0, s11: 0,
         }
     }
 
@@ -108,26 +95,21 @@ pub unsafe extern "C" fn switch_context(old: &mut TaskContext, new: &TaskContext
 const STACK_SIZE: usize = 1024 * 64;
 
 pub fn alloc_stack() -> (Vec<u8>, usize) {
-    let buffer = alloc::vec![0u8; STACK_SIZE];
+    let buffer = vec![0u8; STACK_SIZE];
     let stack_top = buffer.as_ptr() as usize + STACK_SIZE;
-    let stack_top_aligned = stack_top & !0xF;
-    (buffer, stack_top_aligned)
+    (buffer, stack_top & !0xF)
 }
 
-// 测试部分保持不变
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use core::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     static COUNTER: AtomicU32 = AtomicU32::new(0);
 
     extern "C" fn task_entry() {
         COUNTER.store(42, Ordering::SeqCst);
-        loop {
-            core::hint::spin_loop();
-        }
+        loop { std::hint::spin_loop(); }
     }
 
     #[test]
@@ -139,10 +121,9 @@ mod tests {
 
     #[test]
     fn test_context_init() {
-        let (buf, top) = alloc_stack();
-        let _ = buf;
+        let (_, top) = alloc_stack();
         let mut ctx = TaskContext::empty();
-        let entry = task_entry as *const () as usize;
+        let entry = task_entry as usize;
         ctx.init(top, entry);
         assert_eq!(ctx.ra, entry as u64);
         assert!(ctx.sp != 0);
@@ -152,25 +133,23 @@ mod tests {
     fn test_switch_to_task() {
         COUNTER.store(0, Ordering::SeqCst);
 
-        static mut MAIN_CTX_PTR: *mut TaskContext = core::ptr::null_mut();
-        static mut TASK_CTX_PTR: *mut TaskContext = core::ptr::null_mut();
+        static mut MAIN_CTX: *mut TaskContext = std::ptr::null_mut();
+        static mut TASK_CTX: *mut TaskContext = std::ptr::null_mut();
 
         extern "C" fn cooperative_task() {
             COUNTER.store(99, Ordering::SeqCst);
-            unsafe {
-                switch_context(&mut *TASK_CTX_PTR, &*MAIN_CTX_PTR);
-            }
+            unsafe { switch_context(&mut *TASK_CTX, &*MAIN_CTX); }
         }
 
-        let (_stack_buf, stack_top) = alloc_stack();
-        let mut main_ctx = TaskContext::empty();
-        let mut task_ctx = TaskContext::empty();
-        task_ctx.init(stack_top, cooperative_task as *const () as usize);
+        let (_, top) = alloc_stack();
+        let mut main = TaskContext::empty();
+        let mut task = TaskContext::empty();
+        task.init(top, cooperative_task as usize);
 
         unsafe {
-            MAIN_CTX_PTR = &mut main_ctx;
-            TASK_CTX_PTR = &mut task_ctx;
-            switch_context(&mut main_ctx, &task_ctx);
+            MAIN_CTX = &mut main;
+            TASK_CTX = &mut task;
+            switch_context(&mut main, &task);
         }
 
         assert_eq!(COUNTER.load(Ordering::SeqCst), 99);
