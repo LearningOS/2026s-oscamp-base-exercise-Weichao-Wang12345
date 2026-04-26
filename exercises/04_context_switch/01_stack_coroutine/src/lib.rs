@@ -6,7 +6,7 @@
 //!
 //! ## Key Concepts
 //! - **Callee-saved registers**: Save and restore them on switch so the switched-away task can resume correctly later.
-//! - **Stack pointer `sp`** and **return address `ra`**: Restore them in the new context; the first time we switch to a task, `ret` jumps to `entry`.
+//! - **Stack pointer `sp`** and **return address `ra`**: Restore them in the new context; the first time we switch to a task, `ret` jumps to `ra` (the entry point).
 //! - Inline assembly: `core::arch::asm!`
 //!
 //! ## riscv64 ABI (for this exercise)
@@ -14,11 +14,9 @@
 //! - First and second arguments: `a0` (old context), `a1` (new context).
 
 #![cfg(target_arch = "riscv64")]
-#![feature(naked_functions)]
 
-use std::arch::naked_asm;
-
-/// Saved register state for a task.
+/// Saved register state for one task (riscv64). Layout must match the offsets used in the asm below: for one task (riscv64). Layout must match the offsets used in the asm below:
+/// `sp` at 0, `ra` at 8, then `s0`–`s11` at 16, 24, … 104.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TaskContext {
@@ -41,63 +39,97 @@ pub struct TaskContext {
 impl TaskContext {
     pub const fn empty() -> Self {
         Self {
-            sp: 0, ra: 0,
-            s0: 0, s1: 0, s2: 0, s3: 0, s4: 0, s5: 0,
-            s6: 0, s7: 0, s8: 0, s9: 0, s10: 0, s11: 0,
+            sp: 0,
+            ra: 0,
+            s0: 0,
+            s1: 0,
+            s2: 0,
+            s3: 0,
+            s4: 0,
+            s5: 0,
+            s6: 0,
+            s7: 0,
+            s8: 0,
+            s9: 0,
+            s10: 0,
+            s11: 0,
         }
     }
 
+    /// Initialize this context so that when we switch to it, execution starts at `entry`.
+    ///
+    /// - Set `ra = entry` so that the first `ret` in the new context jumps to `entry`.
+    /// - Set `sp = stack_top` with 16-byte alignment (RISC-V ABI requires 16-byte aligned stack at function entry).
+    /// - Leave `s0`–`s11` zero; they will be loaded on switch.
     pub fn init(&mut self, stack_top: usize, entry: usize) {
+        let aligned_sp = stack_top & !0xF;
+        self.sp = aligned_sp as u64;
         self.ra = entry as u64;
-        self.sp = (stack_top & !0xF) as u64;
     }
 }
 
+/// Switch from `old` to `new` context: save current callee-saved regs into `old`, load from `new`, then `ret` (jumps to `new.ra`).
+///
+/// In asm: store `sp`, `ra`, `s0`–`s11` to `[a0]` (old), load from `[a1]` (new), zero `a0`/`a1` so we do not leak pointers into the new context, then `ret`.
+///
+/// Must be `#[unsafe(naked)]` to prevent the compiler from generating a prologue/epilogue.
 #[unsafe(naked)]
-pub unsafe extern "C" fn switch_context(old: &mut TaskContext, new: &TaskContext) {
-    naked_asm!(
-        "sd   sp,  0*8(a0)\n",
-        "sd   ra,  1*8(a0)\n",
-        "sd   s0,  2*8(a0)\n",
-        "sd   s1,  3*8(a0)\n",
-        "sd   s2,  4*8(a0)\n",
-        "sd   s3,  5*8(a0)\n",
-        "sd   s4,  6*8(a0)\n",
-        "sd   s5,  7*8(a0)\n",
-        "sd   s6,  8*8(a0)\n",
-        "sd   s7,  9*8(a0)\n",
-        "sd   s8, 10*8(a0)\n",
-        "sd   s9, 11*8(a0)\n",
-        "sd   s10,12*8(a0)\n",
-        "sd   s11,13*8(a0)\n",
-
-        "ld   sp,  0*8(a1)\n",
-        "ld   ra,  1*8(a1)\n",
-        "ld   s0,  2*8(a1)\n",
-        "ld   s1,  3*8(a1)\n",
-        "ld   s2,  4*8(a1)\n",
-        "ld   s3,  5*8(a1)\n",
-        "ld   s4,  6*8(a1)\n",
-        "ld   s5,  7*8(a1)\n",
-        "ld   s6,  8*8(a1)\n",
-        "ld   s7,  9*8(a1)\n",
-        "ld   s8, 10*8(a1)\n",
-        "ld   s9, 11*8(a1)\n",
-        "ld   s10,12*8(a1)\n",
-        "ld   s11,13*8(a1)\n",
-
-        "li   a0, 0\n",
-        "li   a1, 0\n",
-        "ret\n",
-    )
+pub unsafe extern "C" fn switch_context(_old: &mut TaskContext, _new: &TaskContext) {
+    core::arch::naked_asm!(
+        // ========== 阶段 1: 保存当前上下文到 old (a0) ==========
+        // 按照 TaskContext 的内存布局存储（偏移量对应 #[repr(C)] 结构）
+        "sd sp, 0(a0)",          // sp 在偏移 0
+        "sd ra, 8(a0)",          // ra 在偏移 8  
+        "sd s0, 16(a0)",         // s0 在偏移 16
+        "sd s1, 24(a0)",         // s1 在偏移 24
+        "sd s2, 32(a0)",         // s2 在偏移 32
+        "sd s3, 40(a0)",         // s3 在偏移 40
+        "sd s4, 48(a0)",         // s4 在偏移 48
+        "sd s5, 56(a0)",         // s5 在偏移 56
+        "sd s6, 64(a0)",         // s6 在偏移 64
+        "sd s7, 72(a0)",         // s7 在偏移 72
+        "sd s8, 80(a0)",         // s8 在偏移 80
+        "sd s9, 88(a0)",         // s9 在偏移 88
+        "sd s10, 96(a0)",        // s10 在偏移 96
+        "sd s11, 104(a0)",       // s11 在偏移 104
+        
+        // ========== 阶段 2: 从 new (a1) 恢复上下文 ==========
+        "ld sp, 0(a1)",          // 恢复栈指针
+        "ld ra, 8(a1)",          // 恢复返回地址（关键：ret 会跳转到这个地址）
+        "ld s0, 16(a1)",         // 恢复 s0
+        "ld s1, 24(a1)",         // 恢复 s1
+        "ld s2, 32(a1)",         // 恢复 s2
+        "ld s3, 40(a1)",         // 恢复 s3
+        "ld s4, 48(a1)",         // 恢复 s4
+        "ld s5, 56(a1)",         // 恢复 s5
+        "ld s6, 64(a1)",         // 恢复 s6
+        "ld s7, 72(a1)",         // 恢复 s7
+        "ld s8, 80(a1)",         // 恢复 s8
+        "ld s9, 88(a1)",         // 恢复 s9
+        "ld s10, 96(a1)",        // 恢复 s10
+        "ld s11, 104(a1)",       // 恢复 s11
+        
+        // ========== 阶段 3: 安全清理 ==========
+        // 清零参数寄存器，防止旧上下文的指针泄露到新上下文
+        "li a0, 0",              // old = null
+        "li a1, 0",              // new = null
+        
+        // ========== 阶段 4: 切换完成 ==========
+        // 此时 ra 已被设置为 new.ra，sp 指向 new 的栈
+        // ret 会跳转到 new.ra，完成上下文切换
+        "ret"
+    );
 }
 
 const STACK_SIZE: usize = 1024 * 64;
 
+/// Allocate a stack for a coroutine. Returns `(buffer, stack_top)` where `stack_top` is the high address
+/// (stack grows down). The buffer must be kept alive for the lifetime of the context using this stack.
 pub fn alloc_stack() -> (Vec<u8>, usize) {
     let buffer = vec![0u8; STACK_SIZE];
-    let stack_top = buffer.as_ptr() as usize + STACK_SIZE;
-    (buffer, stack_top & !0xF)
+    let raw_top = buffer.as_ptr() as usize + STACK_SIZE;
+    let buffer_top = raw_top & !0xF; // Must align with 0xF
+    (buffer, buffer_top)
 }
 
 #[cfg(test)]
@@ -109,7 +141,9 @@ mod tests {
 
     extern "C" fn task_entry() {
         COUNTER.store(42, Ordering::SeqCst);
-        loop { std::hint::spin_loop(); }
+        loop {
+            std::hint::spin_loop();
+        }
     }
 
     #[test]
@@ -121,9 +155,10 @@ mod tests {
 
     #[test]
     fn test_context_init() {
-        let (_, top) = alloc_stack();
+        let (buf, top) = alloc_stack();
+        let _ = buf;
         let mut ctx = TaskContext::empty();
-        let entry = task_entry as usize;
+        let entry = task_entry as *const () as usize;
         ctx.init(top, entry);
         assert_eq!(ctx.ra, entry as u64);
         assert!(ctx.sp != 0);
@@ -133,23 +168,25 @@ mod tests {
     fn test_switch_to_task() {
         COUNTER.store(0, Ordering::SeqCst);
 
-        static mut MAIN_CTX: *mut TaskContext = std::ptr::null_mut();
-        static mut TASK_CTX: *mut TaskContext = std::ptr::null_mut();
+        static mut MAIN_CTX_PTR: *mut TaskContext = std::ptr::null_mut();
+        static mut TASK_CTX_PTR: *mut TaskContext = std::ptr::null_mut();
 
         extern "C" fn cooperative_task() {
             COUNTER.store(99, Ordering::SeqCst);
-            unsafe { switch_context(&mut *TASK_CTX, &*MAIN_CTX); }
+            unsafe {
+                switch_context(&mut *TASK_CTX_PTR, &*MAIN_CTX_PTR);
+            }
         }
 
-        let (_, top) = alloc_stack();
-        let mut main = TaskContext::empty();
-        let mut task = TaskContext::empty();
-        task.init(top, cooperative_task as usize);
+        let (_stack_buf, stack_top) = alloc_stack();
+        let mut main_ctx = TaskContext::empty();
+        let mut task_ctx = TaskContext::empty();
+        task_ctx.init(stack_top, cooperative_task as *const () as usize);
 
         unsafe {
-            MAIN_CTX = &mut main;
-            TASK_CTX = &mut task;
-            switch_context(&mut main, &task);
+            MAIN_CTX_PTR = &mut main_ctx;
+            TASK_CTX_PTR = &mut task_ctx;
+            switch_context(&mut main_ctx, &task_ctx);
         }
 
         assert_eq!(COUNTER.load(Ordering::SeqCst), 99);
